@@ -1,8 +1,4 @@
-Esses são dois projetos com propostas visuais e funcionais bem fortes. Para o primeiro, vamos destacar a interface de radar, e para o segundo, o foco será em segurança e visão computacional.
-
-Aqui estão as propostas de README.md seguindo o padrão minimalista que você curte:
-
-Projeto 1: IP Radar Scanner 📡
+IP Radar Scanner 📡
 Este projeto é um monitor de rede local que utiliza uma interface inspirada em radares militares para identificar dispositivos conectados e classificar o nível de segurança da rede.
 
 📋 Funcionalidades
