@@ -1,5 +1,3 @@
-# network_scanner.py
-
 from scapy.all import ARP, Ether, srp
 import threading
 import time
@@ -8,158 +6,110 @@ import ipaddress
 import subprocess
 import platform
 
-# --- Variáveis Globais de Configuração ---
-ACCEPTED_IPS = set()
-SCAN_INTERVAL = 5 # Intervalo de scan em segundos
+ACCEPTED_IPS: set[str] = set()
+SCAN_INTERVAL = 5  # seconds between scans
 
-# --- Whitelist Manager ---
 
-def load_accepted_ips(filename="accepted_ips.txt"):
-    """Carrega a lista de IPs aceitos de um arquivo."""
+def load_accepted_ips(filename: str = "accepted_ips.txt") -> None:
     global ACCEPTED_IPS
     try:
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             ACCEPTED_IPS = {line.strip() for line in f if line.strip()}
     except FileNotFoundError:
-        print("Arquivo 'accepted_ips.txt' não encontrado. Whitelist vazia.")
+        print("accepted_ips.txt not found. Running with empty whitelist.")
 
-def check_ip_status(ip_address):
-    """Retorna a cor e o status do IP com base na whitelist."""
+
+def check_ip_status(ip_address: str) -> tuple[str, str]:
     if ip_address in ACCEPTED_IPS:
-        return "green", "Aceito"
-    else:
-        return "red", "ALERTA - Novo/Desconhecido"
+        return "green", "Allowed"
+    return "red", "ALERT - Unknown"
 
 
-def ping_scan_network(target_ip_range, max_hosts=64):
-    """Faz um scan simples utilizando o comando ping (não requer Npcap/WinPcap)."""
+def ping_scan_network(target_ip_range: str, max_hosts: int = 64) -> list[dict]:
+    """Fallback scanner using ICMP ping. Does not require raw socket privileges."""
     network = ipaddress.ip_network(target_ip_range, strict=False)
     hosts_list = []
 
-    # Ajusta parâmetros de ping para cada sistema operacional
     if platform.system() == "Windows":
-        ping_args = ["ping", "-n", "1", "-w", "200"]  # timeout em ms
+        ping_args = ["ping", "-n", "1", "-w", "200"]
     else:
-        ping_args = ["ping", "-c", "1", "-W", "1"]  # timeout em s
+        ping_args = ["ping", "-c", "1", "-W", "1"]
 
     for i, ip in enumerate(network.hosts()):
         if i >= max_hosts:
             break
-
         cmd = ping_args + [str(ip)]
         try:
             res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
             if res.returncode == 0:
                 color, status = check_ip_status(str(ip))
-                hosts_list.append({
-                    'IP': str(ip),
-                    'MAC': 'N/A',
-                    'StatusColor': color,
-                    'StatusText': status
-                })
+                hosts_list.append({"IP": str(ip), "MAC": "N/A", "StatusColor": color, "StatusText": status})
         except Exception:
             pass
 
     return hosts_list
 
 
-# --- Detector de Gateway e Range ---
-
-def get_network_range_from_gateway():
-    """
-    Descobre o endereço do gateway padrão e constrói o range de rede /24.
-    """
-    FALLBACK_RANGE = "192.168.1.1/24" 
-    
+def get_network_range_from_gateway() -> str:
+    """Derives the /24 network range from the default gateway IP."""
+    fallback = "192.168.1.0/24"
     try:
         gws = netifaces.gateways()
-        default_interface = gws['default'][netifaces.AF_INET]
-        gateway_ip = default_interface[0]
-        
-        network = ipaddress.ip_network(f'{gateway_ip}/24', strict=False)
-        target_range = str(network) 
-        
-        print(f"Range de rede detectado a partir do Gateway ({gateway_ip}): {target_range}")
+        gateway_ip = gws["default"][netifaces.AF_INET][0]
+        network = ipaddress.ip_network(f"{gateway_ip}/24", strict=False)
+        target_range = str(network)
+        print(f"[*] Network range from gateway ({gateway_ip}): {target_range}")
         return target_range
-        
     except Exception:
-        print(f"AVISO: Não foi possível detectar o gateway padrão. Usando fallback: {FALLBACK_RANGE}")
-        return FALLBACK_RANGE
+        print(f"[!] Could not detect gateway. Using fallback: {fallback}")
+        return fallback
 
 
-# --- Network Scanner ---
+def scan_network(target_ip_range: str) -> list[dict]:
+    """ARP scan over the given range. Reloads the whitelist on every call."""
+    load_accepted_ips()
 
-def scan_network(target_ip_range):
-    """
-    Realiza o ARP scan na rede e retorna a lista de hosts ativos com status de cor.
-    """
-    load_accepted_ips() # Recarrega a whitelist a cada scan
-
-    ether_frame = Ether(dst="ff:ff:ff:ff:ff:ff") 
-    arp_request = ARP(pdst=target_ip_range)
-    packet = ether_frame / arp_request
-
+    packet = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=target_ip_range)
     hosts_list = []
-    
-    try:
-        # Envia e recebe a resposta (o timeout é baixo para scans frequentes)
-        answered_list, unanswered_list = srp(packet, timeout=1, verbose=False)
 
-        # Processa a resposta
-        for sent, received in answered_list:
+    try:
+        answered, _ = srp(packet, timeout=1, verbose=False)
+        for _, received in answered:
             ip = received.psrc
             mac = received.hwsrc
-            
-            color, status = check_ip_status(ip) 
-            
-            hosts_list.append({
-                'IP': ip, 
-                'MAC': mac,
-                'StatusColor': color,
-                'StatusText': status
-            })
-            
-    except Exception as e:
-        # Captura qualquer erro de rede/driver (necessário para estabilidade no Windows/Linux)
-        print("\n" + "="*50)
-        print("ERRO GRAVE DE SCAN NA REDE! O SCAN FALHOU.")
-        print(f"   Detalhamento do Erro: {e}")
-        print("   CAUSA PROVAVEL: Permissao de Root/Administrador ou Driver de Rede (Npcap).")
+            color, status = check_ip_status(ip)
+            hosts_list.append({"IP": ip, "MAC": mac, "StatusColor": color, "StatusText": status})
 
-        # Quando o scapy não consegue enviar pacotes na camada 2 (L2), tentamos
-        # um scan alternativo usando ping (não requer Npcap).
+    except Exception as e:
+        print(f"[!] ARP scan failed: {e}")
+        print("[!] Likely cause: missing root privileges or no Npcap on Windows.")
+
         error_text = str(e).lower()
         if "winpcap" in error_text or "l3 raw" in error_text or "layer 2" in error_text:
-            print("   Tentando fallback de scan usando ping (pode ser mais lento).")
-            hosts_list = ping_scan_network(target_ip_range)
-            return hosts_list
+            print("[*] Falling back to ping scan.")
+            return ping_scan_network(target_ip_range)
 
-        print("="*50 + "\n")
         return []
 
     return hosts_list
 
-# --- Threading para varredura em background ---
 
 class ScannerThread(threading.Thread):
-    def __init__(self, target_ip_range, update_callback):
-        threading.Thread.__init__(self)
-        
-        # Se o range passado for o padrão (fallback), tenta detectar o gateway
+    def __init__(self, target_ip_range: str, update_callback):
+        super().__init__(daemon=True)
+        # Auto-detect if caller passed the placeholder default
         if target_ip_range == "192.168.1.1/24":
-             self.target_ip_range = get_network_range_from_gateway()
+            self.target_ip_range = get_network_range_from_gateway()
         else:
-             self.target_ip_range = target_ip_range
-             
+            self.target_ip_range = target_ip_range
         self.update_callback = update_callback
         self.running = True
 
-    def run(self):
-        # Loop de scan contínuo
+    def run(self) -> None:
         while self.running:
             hosts = scan_network(self.target_ip_range)
             self.update_callback(hosts)
-            time.sleep(SCAN_INTERVAL) 
+            time.sleep(SCAN_INTERVAL)
 
-    def stop(self):
+    def stop(self) -> None:
         self.running = False
