@@ -1,30 +1,38 @@
-IP Radar Scanner 📡
-Este projeto é um monitor de rede local que utiliza uma interface inspirada em radares militares para identificar dispositivos conectados e classificar o nível de segurança da rede.
+# ip_scanner
 
-📋 Funcionalidades
-Varredura em Tempo Real: Identifica todos os dispositivos (IPs) conectados à rede local.
+A local network monitor that scans for active devices and displays them on a rotating radar UI. Known devices are shown in green; anything not on the whitelist shows in red.
 
-White List (IPs Permitidos): Permite configurar uma lista de dispositivos conhecidos.
+## How it works
 
-Interface de Radar: Exibição visual circular onde:
+On startup the app detects the default gateway and derives the /24 network range automatically. A background thread runs an ARP scan every 5 seconds using Scapy and hands the results to the UI. If Scapy cannot send Layer 2 packets (common on Windows without Npcap, or without root on Linux), it falls back to ICMP ping, which is slower but requires no extra drivers.
 
-🟢 Verde: Dispositivos autorizados (White List).
+The radar canvas draws a rotating sweep line and plots each discovered host as a blip at a fixed ring. Green means the IP is in `accepted_ips.txt`; red means it is unknown.
 
-🔴 Vermelho: Dispositivos desconhecidos/potenciais intrusos.
+## Requirements
 
-Alerta Visual: Identificação imediata de quem está "sugando" ou invadindo sua internet.
+Python 3.10 or later.
 
-🛠️ Tecnologias
-Python / Java (Ajuste conforme sua escolha).
+```
+pip install scapy netifaces pygame
+```
 
-Bibliotecas de Redes: Scapy ou bibliotecas de Socket.
+On Linux, run as root or grant the binary `cap_net_raw` so Scapy can send raw packets. On Windows, install [Npcap](https://npcap.com) for ARP scanning; the ping fallback works without it.
 
-Interface Gráfica: Pygame ou Tkinter para a renderização do radar.
+## Whitelist
 
-🚀 Como usar
-Edite o arquivo accepted_ips.txt com os endereços da sua casa.
+Edit `accepted_ips.txt` and add one IP per line. The file is reloaded on every scan, so changes take effect without restarting.
 
-Execute o script principal:
+```
+192.168.1.1
+192.168.1.100
+```
 
-Bash
-python radar_app.py
+## Run
+
+```
+python main.py
+```
+
+## License
+
+MIT.
